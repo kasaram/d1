@@ -2,8 +2,9 @@ SELECT
   id,
   emp_name,
   social_field,
-  COALESCE(social_info:custinfo:custinfo:customer_id::string, '0') AS customer_id
+  CASE
+    WHEN social_field LIKE '%\"customer_id\":\"([A-Za-z0-9]+)\"%' THEN REGEXP_SUBSTR(social_field, '\"customer_id\":\"([A-Za-z0-9]+)\"', 1, 1, 'e')
+    ELSE '0'
+  END AS customer_id
 FROM
-  your_table,
-  lateral flatten(input => parse_json(social_field)) f,
-  lateral flatten(input => parse_json(f.value)) social_info;
+  your_table;
