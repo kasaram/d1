@@ -2,6 +2,8 @@ SELECT
   id,
   emp_name,
   social_field,
-  COALESCE(json_extract_path_text(json_parse(social_field), 'custinfo', 'custinfo', 'customer_id'), '0') AS customer_id
+  COALESCE(social_info:custinfo:custinfo:customer_id::string, '0') AS customer_id
 FROM
-  your_table;
+  your_table,
+  lateral flatten(input => parse_json(social_field)) f,
+  lateral flatten(input => parse_json(f.value)) social_info;
