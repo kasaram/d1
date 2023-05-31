@@ -1,12 +1,8 @@
-
-
 SELECT
-  id,
-  emp_name,
-  social_field,
-  CASE
-    WHEN PARSE_JSON(social_field)[1]:custinfo:custinfo:customer_id IS NOT NULL THEN PARSE_JSON(social_field)[1]:custinfo:custinfo:customer_id
-    ELSE '0'
-  END AS customer_id
+  t.id,
+  t.emp_name,
+  t.social_field,
+  COALESCE(json_extract_path_text(f.value, 'custinfo.custinfo.customer_id'), '0') AS customer_id
 FROM
-  your_table;
+  your_table t,
+  LATERAL FLATTEN(input => parse_json(t.social_field)) f;
