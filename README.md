@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession, functions as F
+import sys
 
 def main(input_file_path, date_val, output_file_path):
     # Initialize Spark session
@@ -23,9 +24,12 @@ def main(input_file_path, date_val, output_file_path):
     spark.stop()
 
 if __name__ == "__main__":
-    # Replace with your S3 paths and date value
-    input_file = "s3://file/pd_file.csv"
-    date_value = "12-03-2023"
-    output_file = "s3://file/output.csv"
+    if len(sys.argv) != 4:
+        print("Usage: spark-submit code.py <input_file> <date_value> <output_file>")
+        sys.exit(1)
+    
+    input_file = sys.argv[1]
+    date_value = sys.argv[2]
+    output_file = sys.argv[3]
 
     main(input_file, date_value, output_file)
