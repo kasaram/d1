@@ -14,12 +14,12 @@ df = spark.read.csv(input_file, header=True, inferSchema=True)
 # Create a temporary table from the DataFrame
 df.createOrReplaceTempView("athena_table_name")
 
-# Define the SQL query
-sql_query = f"""
+# Define the SQL query using format()
+sql_query = """
     SELECT *
     FROM athena_table_name
-    WHERE grading_date = '{date_val}'
-"""
+    WHERE grading_date = '{}'
+""".format(date_val)
 
 # Execute the query
 filtered_df = spark.sql(sql_query)
