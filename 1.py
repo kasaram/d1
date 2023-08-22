@@ -11,11 +11,11 @@ def main(input_file, date_val, output_file):
         # Create a temporary table from the DataFrame
         df.createOrReplaceTempView("athena_table_name")
 
-        # Define the SQL query
+        # Define the SQL query with "last_grading_date"
         sql_query = """
             SELECT *
             FROM athena_table_name
-            WHERE grading_date = '{}'
+            WHERE last_grading_date = '{}'
         """.format(date_val)
 
         # Execute the query
@@ -47,7 +47,6 @@ if __name__ == '__main__':
     main(input_file, date_val, output_file)
 
 
-
 from airflow import DAG
 from airflow.operators.bash_operator import BashOperator
 from datetime import datetime, timedelta
@@ -69,15 +68,15 @@ dag = DAG(
 )
 
 # Modify these values accordingly
-EMR_IP_Address = "your_emr_ip_address"
-ssh_key_path = "/usr/emr.pem"
+MASTER_IP = "your_emr_master_ip"
+KEY_FILE = "/path/to/your/key_file.pem"
 input_file = "s3://file/pd_file.csv"
 date_val = "12-03-2023"
 output_file = "s3://file/output.csv"
 
 # Define the ssh command
 ssh_command = (
-    f"ssh -o StrictHostKeyChecking=no -t -i {ssh_key_path} hadoop@{EMR_IP_Address} "
+    f"ssh -o StrictHostKeyChecking=no -t -i {KEY_FILE} hadoop@{MASTER_IP} "
     f"spark-submit /home/hadoop/code.py {input_file} {date_val} {output_file}"
 )
 
