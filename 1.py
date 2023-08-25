@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession
+from airflow.models import Variable
 
 def main(input_file, date_val, output_file):
     try:
@@ -31,16 +32,18 @@ def main(input_file, date_val, output_file):
         spark.stop()
 
         # Custom success message with the number of records
-        print(f"Spark job completed successfully! Number of records: {num_records}")
-
-        # Return the number of records for XCom
-        return num_records
+        success_message = "Spark job completed successfully! Number of records: {}".format(num_records)
+        print(success_message)
+        
+        # Push num_records to XCom
+        Variable.set("num_records", num_records)
 
     except Exception as e:
         # Custom failure message
         print("An error occurred:", e)
         # Return None in case of failure
-        return None
+        num_records = None
+        Variable.set("num_records", num_records)
 
 if __name__ == '__main__':
     import sys
@@ -52,4 +55,4 @@ if __name__ == '__main__':
     date_val = sys.argv[2]
     output_file = sys.argv[3]
 
-    num_records = main(input_file, date_val, output_file)
+    main(input_file, date_val, output_file)
