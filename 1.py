@@ -1,129 +1,87 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when
+from pyspark.sql.window import Window
 
-def main(input_file, date_val, output_file):
-    num_records = None  # Initialize num_records to None
+# Initialize a Spark session
+spark = SparkSession.builder.appName("DataValidation").getOrCreate()
 
-    try:
-        # Initialize Spark session
-        spark = SparkSession.builder.appName("AthenaQuery").getOrCreate()
+# Load the input CSV file
+input_file_path = "s3://your-s3-bucket/input_file.csv"  # Replace with your S3 path
+lookup_file_path = "s3://your-s3-bucket/lookup.csv"      # Replace with your S3 path
+correct_output_path = "s3://your-s3-bucket/correct_records.csv"  # Replace with your S3 path
+error_output_path = "s3://your-s3-bucket/error_records.csv"      # Replace with your S3 path
 
-        # Create a DataFrame from the CSV file
-        df = spark.read.csv(input_file, header=True, inferSchema=True)
+input_df = spark.read.csv(input_file_path, header=True, inferSchema=True)
+lookup_df = spark.read.csv(lookup_file_path, header=True, inferSchema=True)
 
-        # Create a temporary table from the DataFrame
-        df.createOrReplaceTempView("athena_table_name")
+# Define UDF for date formatting
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+from datetime import datetime
 
-        # Define the SQL query with "last_grading_date"
-        sql_query = """
-            SELECT *
-            FROM athena_table_name
-            WHERE last_grading_date = '{}'
-        """.format(date_val)
+date_format_udf = udf(lambda date_str: datetime.strptime(date_str, "%d%m%Y").strftime("%d%m%Y")
+                     if date_str else None, StringType())
 
-        # Execute the query
-        filtered_df = spark.sql(sql_query)
+# Define validation functions
+def validate_cis_code(cis_code):
+    return (cis_code is not None) and cis_code.isalnum()
 
-        # Get the number of records in filtered_df
-        num_records = filtered_df.count()
+def validate_definitive_pd(pd, mgs):
+    lookup_row = lookup_df.filter(lookup_df["mgs"] == mgs).first()
+    if lookup_row:
+        lower_bound = lookup_row["lower_bound"]
+        upper_bound = lookup_row["upper_bound"]
+        return (pd is not None) and (lower_bound <= pd <= upper_bound)
+    else:
+        return False
 
-        # Write the filtered DataFrame to a CSV file
-        filtered_df.write.csv(output_file, header=True, mode="overwrite")
+def validate_record(row):
+    errors = []
 
-        # Stop the Spark session
-        spark.stop()
+    # Validation 1
+    if not row["cis_code"]:
+        errors.append("cis_code is empty")
 
-        # Custom success message
-        print("Spark job completed successfully!")
+    # Validation 2
+    if not (0 <= row["definitive_pd"] <= 1):
+        errors.append("definitive_pd is out of range")
 
-    except Exception as e:
-        # Custom failure message
-        print("An error occurred:", e)
+    # Validation 3
+    if not (1 <= row["definitive_grade"] <= 27):
+        errors.append("definitive_grade is out of range")
 
-    return num_records  # Return num_records from the main function
+    # Validation 4
+    if row["cascade_flag"] not in ("Y", "N"):
+        errors.append("cascade_flag is invalid")
 
-if __name__ == '__main__':
-    import sys
-    if len(sys.argv) != 4:
-        print("Usage: code.py <input_file> <date_val> <output_file>")
-        sys.exit(1)
+    # Validation 5
+    if not validate_cis_code(row["cis_code"]):
+        errors.append("cis_code is not alphanumeric")
 
-    input_file = sys.argv[1]
-    date_val = sys.argv[2]
-    output_file = sys.argv[3]
+    # Validation 6
+    row["last_grading_date"] = date_format_udf(row["last_grading_date"])
+    if not row["last_grading_date"]:
+        errors.append("last_grading_date has an invalid format")
 
-    num_records = main(input_file, date_val, output_file)
-    print(num_records)  # Print num_records for demonstration purposes
+    # Validation 7
+    if row["model_name"] == "Funds" and not row["segment"]:
+        errors.append("segment cannot be null when model_name is 'Funds'")
 
+    # Validation 8
+    if not validate_definitive_pd(row["definitive_pd"], row["definitive_grade"]):
+        errors.append("definitive_pd is not within the range specified in lookup")
 
-from airflow import DAG
-from airflow.operators.bash_operator import BashOperator
-from airflow.operators.python_operator import PythonOperator
-from airflow.operators.dummy_operator import DummyOperator
-from datetime import datetime, timedelta
-from airflow.models import Variable
+    return row, ",".join(errors)
 
-default_args = {
-    "owner": "airflow",
-    "depends_on_past": False,
-    "start_date": datetime(2023, 8, 17),  # Modify with the actual start date
-    "retries": 1,
-    "retry_delay": timedelta(minutes=5),
-}
+# Apply validations and split into correct and error records
+validations = input_df.rdd.map(validate_record).toDF(["data", "error"])
 
-dag = DAG(
-    "spark_job_dag",
-    default_args=default_args,
-    schedule_interval=None,
-    catchup=False,
-    tags=["example"],
-)
+correct_records = validations.filter(validations["error"] == "").select("data.*")
+error_records = validations.filter(validations["error"] != "")
 
-# Modify these values accordingly
-MASTER_IP = "your_emr_master_ip"
-KEY_FILE = "/path/to/your/key_file.pem"
-input_file = "s3://file/pd_file.csv"
-date_val = "12-03-2023"
-output_file = "output.csv"  # Use a local path
+# Save the correct and error records to separate files
+correct_records.write.csv(correct_output_path, header=True, mode="overwrite")
+error_records.write.csv(error_output_path, header=True, mode="overwrite")
 
-# Define the ssh command with cluster mode
-ssh_command = (
-    f"ssh -o StrictHostKeyChecking=no -t -i {KEY_FILE} hadoop@{MASTER_IP} "
-    f"spark-submit --deploy-mode cluster /home/hadoop/code.py {input_file} {date_val} {output_file}"
-)
-
-def get_num_records(**kwargs):
-    ti = kwargs['ti']
-    num_records = ti.xcom_pull(task_ids='run_spark_job')
-    return num_records
-
-def on_success_callback(context, **kwargs):
-    num_records = get_num_records(**kwargs)
-    success_message = "Task succeeded. Spark job completed successfully with {} records!".format(num_records)
-    context['ti'].xcom_push(key='success_message', value=success_message)
-    print(success_message)
-
-def on_failure_callback(context):
-    print("Task failed. Spark job failed. Check logs for details.")
-
-run_spark_job = BashOperator(
-    task_id="run_spark_job",
-    bash_command=ssh_command,
-    dag=dag,
-)
-
-get_records_task = PythonOperator(
-    task_id='get_records_task',
-    python_callable=get_num_records,
-    provide_context=True,
-    dag=dag,
-)
-
-display_success_message = DummyOperator(
-    task_id='display_success_message',
-    dag=dag,
-)
-
-run_spark_job >> get_records_task >> display_success_message
-
-if __name__ == "__main__":
-    dag.cli()
+# Stop the Spark session
+spark.stop()
