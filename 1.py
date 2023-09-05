@@ -16,7 +16,7 @@ input_df = spark.read.csv(input_file_path, header=True, inferSchema=True)
 lookup_df = spark.read.csv(lookup_file_path, header=True, inferSchema=True)
 
 # Define UDF for date formatting
-date_format_udf = udf(lambda date_str: datetime.strptime(date_str, "%d%m%Y").strftime("%d%m%Y")
+date_format_udf = udf(lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y")
                      if date_str else None, StringType())
 
 # Define validation functions
@@ -32,8 +32,16 @@ def validate_definitive_pd(pd, mgs):
     else:
         return False
 
+def validate_last_grading_date(date_str):
+    try:
+        datetime.strptime(date_str, "%d-%b-%Y")
+        return True
+    except ValueError:
+        return False
+
 # Define validation UDFs
 validate_definitive_pd_udf = udf(validate_definitive_pd, DoubleType())
+validate_last_grading_date_udf = udf(validate_last_grading_date)
 
 # Apply validations
 validations = input_df.join(lookup_df, input_df["definitive_grade"] == lookup_df["mgs"], "left") \
@@ -42,7 +50,7 @@ validations = input_df.join(lookup_df, input_df["definitive_grade"] == lookup_df
                           .when((input_df["definitive_pd"] < 0) | (input_df["definitive_pd"] > 1), "definitive_pd is out of range")
                           .when((input_df["definitive_grade"] < 1) | (input_df["definitive_grade"] > 27), "definitive_grade is out of range")
                           .when(~input_df["cascade_flag"].isin("Y", "N"), "cascade_flag is invalid")
-                          .when((input_df["last_grading_date"].cast("string").cast("date") == "1900-01-01") | (input_df["last_grading_date"].cast("string").cast("date").isNull()), "last_grading_date has an invalid format")
+                          .when(~validate_last_grading_date_udf(input_df["last_grading_date"].cast("string")), "last_grading_date has an invalid format")
                           .when((input_df["model_name"] == "Funds") & (input_df["segment"].isNull()), "segment cannot be null when model_name is 'Funds'")
                           .when(input_df["definitive_pd"].isNull(), "definitive_pd is empty")
                           .when((lookup_df["mgs"].isNull()) | ((input_df["definitive_pd"] < lookup_df["lower_bound"]) | (input_df["definitive_pd"] > lookup_df["upper_bound"])), "definitive_pd is not within the range specified in lookup")
