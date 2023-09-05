@@ -21,14 +21,14 @@ date_format_udf = udf(lambda date_str: datetime.strptime(date_str, "%d%m%Y").str
 
 # Define validation functions
 def validate_cis_code(cis_code):
-    return cis_code.isNotNull() & (col(cis_code).rlike("^[a-zA-Z0-9]+$"))
+    return cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$")
 
 def validate_definitive_pd(pd, mgs):
     lookup_row = lookup_df.filter(lookup_df["mgs"] == mgs).first()
     if lookup_row:
         lower_bound = lookup_row["lower_bound"]
         upper_bound = lookup_row["upper_bound"]
-        return pd.isNotNull() & (lower_bound <= pd) & (pd <= upper_bound)
+        return pd is not None and lower_bound <= pd <= upper_bound
     else:
         return False
 
