@@ -4,7 +4,6 @@ from pyspark.sql.window import Window
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StringType
 from datetime import datetime
-from pyspark.sql import Row
 
 # Initialize a Spark session
 spark = SparkSession.builder.appName("DataValidation").getOrCreate()
@@ -35,57 +34,29 @@ def validate_definitive_pd(pd, mgs):
     else:
         return False
 
-def validate_record(row):
-    errors = []
+# Define validation UDFs
+validate_cis_code_udf = udf(validate_cis_code)
+validate_definitive_pd_udf = udf(validate_definitive_pd)
 
-    # Validation 1
-    if not row["cis_code"]:
-        errors.append("cis_code is empty")
+# Apply validations
+validations = input_df.withColumn("error", when(input_df["cis_code"].isNull(), "cis_code is empty")
+                                       .when(~input_df["cis_code"].rlike("^[a-zA-Z0-9]+$"), "cis_code is not alphanumeric")
+                                       .when((input_df["definitive_pd"] < 0) | (input_df["definitive_pd"] > 1), "definitive_pd is out of range")
+                                       .when((input_df["definitive_grade"] < 1) | (input_df["definitive_grade"] > 27), "definitive_grade is out of range")
+                                       .when(~input_df["cascade_flag"].isin("Y", "N"), "cascade_flag is invalid")
+                                       .when((input_df["last_grading_date"].cast("string").cast("date") == "1900-01-01") | (input_df["last_grading_date"].cast("string").cast("date").isNull()), "last_grading_date has an invalid format")
+                                       .when((input_df["model_name"] == "Funds") & (input_df["segment"].isNull()), "segment cannot be null when model_name is 'Funds'")
+                                       .when(~validate_cis_code_udf(input_df["cis_code"]), "cis_code is not alphanumeric")
+                                       .when(~validate_definitive_pd_udf(input_df["definitive_pd"], input_df["definitive_grade"]), "definitive_pd is not within the range specified in lookup")
+                                       .otherwise(None))
 
-    # Validation 2
-    if not (0 <= row["definitive_pd"] <= 1):
-        errors.append("definitive_pd is out of range")
-
-    # Validation 3
-    if not (1 <= row["definitive_grade"] <= 27):
-        errors.append("definitive_grade is out of range")
-
-    # Validation 4
-    if row["cascade_flag"] not in ("Y", "N"):
-        errors.append("cascade_flag is invalid")
-
-    # Validation 5
-    if not validate_cis_code(row["cis_code"]):
-        errors.append("cis_code is not alphanumeric")
-
-    # Validation 6
-    row["last_grading_date"] = date_format_udf(row["last_grading_date"])
-    if not row["last_grading_date"]:
-        errors.append("last_grading_date has an invalid format")
-
-    # Validation 7
-    if row["model_name"] == "Funds" and not row["segment"]:
-        errors.append("segment cannot be null when model_name is 'Funds'")
-
-    # Validation 8
-    if not validate_definitive_pd(row["definitive_pd"], row["definitive_grade"]):
-        errors.append("definitive_pd is not within the range specified in lookup")
-
-    return row, ",".join(errors)
-
-# Apply validations and split into correct and error records
-validations = input_df.rdd.map(validate_record)
-
-correct_records = validations.filter(lambda x: x[1] == "").map(lambda x: Row(**x[0]))
-error_records = validations.filter(lambda x: x[1] != "").map(lambda x: Row(**x[0], error=x[1]))
-
-# Create DataFrames for correct and error records
-correct_records_df = spark.createDataFrame(correct_records)
-error_records_df = spark.createDataFrame(error_records)
+# Split into correct and error records
+correct_records = validations.filter(validations["error"].isNull())
+error_records = validations.filter(validations["error"].isNotNull())
 
 # Save the correct and error records to separate files
-correct_records_df.write.csv(correct_output_path, header=True, mode="overwrite")
-error_records_df.write.csv(error_output_path, header=True, mode="overwrite")
+correct_records.write.csv(correct_output_path, header=True, mode="overwrite")
+error_records.write.csv(error_output_path, header=True, mode="overwrite")
 
 # Stop the Spark session
 spark.stop()
