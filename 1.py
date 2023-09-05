@@ -2,7 +2,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when
 from pyspark.sql.window import Window
 from pyspark.sql.functions import udf
-from pyspark.sql.types import StringType
+from pyspark.sql.types import StringType, DoubleType
 from datetime import datetime
 
 # Initialize a Spark session
@@ -36,7 +36,7 @@ def validate_definitive_pd(pd, mgs):
 
 # Define validation UDFs
 validate_cis_code_udf = udf(validate_cis_code)
-validate_definitive_pd_udf = udf(validate_definitive_pd)
+validate_definitive_pd_udf = udf(validate_definitive_pd, DoubleType())
 
 # Apply validations
 validations = input_df.withColumn("error", when(input_df["cis_code"].isNull(), "cis_code is empty")
