@@ -1,6 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, lit
-from pyspark.sql.window import Window
+from pyspark.sql.functions import col, when, udf
 from pyspark.sql.types import StringType, DoubleType
 from datetime import datetime
 
@@ -23,6 +22,15 @@ date_format_udf = udf(lambda date_str: datetime.strptime(date_str, "%d%m%Y").str
 # Define validation functions
 def validate_cis_code(cis_code):
     return (cis_code is not None) and cis_code.isalnum()
+
+def validate_definitive_pd(pd, mgs):
+    lookup_row = lookup_df.filter(lookup_df["mgs"] == mgs).first()
+    if lookup_row:
+        lower_bound = lookup_row["lower_bound"]
+        upper_bound = lookup_row["upper_bound"]
+        return (pd is not None) and (lower_bound <= pd <= upper_bound)
+    else:
+        return False
 
 # Define validation UDFs
 validate_cis_code_udf = udf(validate_cis_code)
