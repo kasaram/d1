@@ -7,34 +7,21 @@ def initialize_spark():
     return SparkSession.builder.appName("DataValidation").getOrCreate()
 
 def load_csv(spark, path, header=True, infer_schema=True):
-    try:
-        return spark.read.csv(path, header=header, inferSchema=infer_schema)
-    except Exception as e:
-        raise Exception(f"Error loading CSV from {path}: {str(e)}")
+    return spark.read.csv(path, header=header, inferSchema=infer_schema)
 
-def format_date_udf():
-    return udf(lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y") if date_str else None, StringType())
-
-def validate_cis_code(cis_code):
-    return cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$")
+def register_udfs(spark):
+    spark.udf.register("format_date", lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y") if date_str else None, StringType())
+    spark.udf.register("validate_cis_code", lambda cis_code: cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$"))
+    spark.udf.register("validate_definitive_pd", validate_definitive_pd)
 
 def validate_definitive_pd(pd, mgs):
-    lookup_row = lookup_df.filter(lookup_df["mgs"] == mgs).first()
+    lookup_row = spark.sql(f"SELECT * FROM lookup WHERE mgs = {mgs}").first()
     if lookup_row:
         lower_bound = lookup_row["lower_bound"]
         upper_bound = lookup_row["upper_bound"]
         return pd is not None and lower_bound <= pd <= upper_bound
     else:
         return False
-
-def validate_definitive_pd_udf():
-    return udf(validate_definitive_pd, DoubleType())
-
-def save_to_csv(dataframe, path):
-    try:
-        dataframe.write.csv(path, header=True, mode="overwrite")
-    except Exception as e:
-        raise Exception(f"Error saving DataFrame to {path}: {str(e)}")
 
 def main():
     try:
@@ -47,6 +34,7 @@ def main():
         raw_interface_path = "s3://your-s3-bucket/raw_interface.csv"
 
         # Load Spark session
+        global spark
         spark = initialize_spark()
 
         # Load input files
@@ -54,49 +42,64 @@ def main():
         lookup_df = load_csv(spark, lookup_file_path, header=True, infer_schema=True)
         input_df = load_csv(spark, input_file_path, header=True, infer_schema=True)
 
-        # Define UDF for date formatting
-        date_format_udf = format_date_udf()
+        # Register UDFs
+        register_udfs(spark)
 
-        # Apply validations
-        validations = input_df.join(lookup_df, input_df["definitive_grade"] == lookup_df["mgs"], "left") \
-            .withColumn("error", when(input_df["cis_code"].isNull(), "cis_code is empty")
-                                  .when(~validate_cis_code(input_df["cis_code"]), "cis_code is not alphanumeric")
-                                  .when((input_df["definitive_pd"] < 0) | (input_df["definitive_pd"] > 1), "definitive_pd is out of range")
-                                  .when((input_df["definitive_grade"] < 1) | (input_df["definitive_grade"] > 27), "definitive_grade is out of range")
-                                  .when(~input_df["cascade_flag"].isin("Y", "N"), "cascade_flag is invalid")
-                                  .when(~validate_definitive_pd_udf()(input_df["definitive_pd"], input_df["definitive_grade"]), "definitive_pd is not within the range specified in lookup")
-                                  .when((input_df["model_name"] == "Funds") & (input_df["segment"].isNull()), "segment cannot be null when model_name is 'Funds'")
-                                  .when(input_df["definitive_pd"].isNull(), "definitive_pd is empty")
-                                  .otherwise(None))
+        # Create temporary views for DataFrames
+        lookup_df.createOrReplaceTempView("lookup")
+        input_df.createOrReplaceTempView("input_data")
+
+        # Apply validations using Spark SQL
+        validations = spark.sql("""
+            SELECT *,
+                CASE
+                    WHEN cis_code IS NULL THEN 'cis_code is empty'
+                    WHEN NOT validate_cis_code(cis_code) THEN 'cis_code is not alphanumeric'
+                    WHEN definitive_pd < 0 OR definitive_pd > 1 THEN 'definitive_pd is out of range'
+                    WHEN definitive_grade < 1 OR definitive_grade > 27 THEN 'definitive_grade is out of range'
+                    WHEN cascade_flag NOT IN ('Y', 'N') THEN 'cascade_flag is invalid'
+                    WHEN NOT validate_definitive_pd(definitive_pd, definitive_grade) THEN 'definitive_pd is not within the range specified in lookup'
+                    WHEN model_name = 'Funds' AND segment IS NULL THEN 'segment cannot be null when model_name is Funds'
+                    WHEN definitive_pd IS NULL THEN 'definitive_pd is empty'
+                    ELSE NULL
+                END AS error
+            FROM input_data
+        """)
 
         # Split into correct and error records
         correct_records = validations.filter(validations["error"].isNull())
 
         # Save the correct records to a new file
-        save_to_csv(correct_records, correct_output_path)
+        correct_records.write.csv(correct_output_path, header=True, mode="overwrite")
 
-        # Filter records based on year_month
+        # Filter records based on year_month using Spark SQL
         year_month = '202309'
-        validated_records = correct_records.filter(col("last_grading_date").cast("string").substr(5, 6) == year_month)
+        spark.sql(f"CREATE OR REPLACE TEMPORARY VIEW validated_records AS SELECT * FROM correct_records WHERE substr(last_grading_date, 5, 6) = {year_month}")
 
         # Save the validated records to a new file
-        save_to_csv(validated_records, validated_records_output_path)
+        validated_records = spark.sql("SELECT * FROM validated_records")
+        validated_records.write.csv(validated_records_output_path, header=True, mode="overwrite")
 
         # Load the process.raw_interface table
         raw_interface = load_csv(spark, raw_interface_path, header=True, infer_schema=True)
 
-        # Find the maximum day_rk for each counterparty_id in process.raw_interface
-        max_day_rk_per_counterparty = raw_interface.groupBy("counterparty_id").agg(max("day_rk").alias("max_day_rk"))
+        # Find the maximum day_rk for each counterparty_id in process.raw_interface using Spark SQL
+        max_day_rk_per_counterparty = spark.sql("""
+            SELECT counterparty_id, MAX(day_rk) AS max_day_rk
+            FROM raw_interface
+            GROUP BY counterparty_id
+        """)
 
-        # Join process.raw_interface_updated with validated_records_subset based on specified conditions
-        joined_data = raw_interface.join(
-            validated_records,
-            (col("counterparty_id") == max_day_rk_per_counterparty["counterparty_id"]) &
-            (col("day_rk") == max_day_rk_per_counterparty["max_day_rk"]) &
-            (col("postcrm") == col("definitive_pd")) &
-            (col("precrm") == col("definitive_pd")),
-            "left"
-        )
+        # Join process.raw_interface_updated with validated_records_subset based on specified conditions using Spark SQL
+        joined_data = spark.sql("""
+            SELECT r.*, v.*
+            FROM raw_interface r
+            LEFT JOIN validated_records v
+            ON r.counterparty_id = v.counterparty_id
+            AND r.day_rk = v.max_day_rk
+            AND r.postcrm = v.definitive_pd
+            AND r.precrm = v.definitive_pd
+        """)
 
         # Save the joined data to Athena as process.raw_interface_updated
         joined_data.write.format("parquet").mode("overwrite").saveAsTable("process.raw_interface_updated")
