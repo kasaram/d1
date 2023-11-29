@@ -1,45 +1,44 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, max
-from datetime import datetime
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
-# Initialize a Spark session
-spark = SparkSession.builder.appName("DataValidation").getOrCreate()
+# Initialize Spark session
+spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
 
-# Load the input CSV files
-raw_interface_path = "s3://your-s3-bucket/raw_interface.csv"  # Replace with your S3 path
-validated_records_path = "s3://your-s3-bucket/validated_records.csv"  # Replace with your S3 path
+# Assuming correct_records and raw_interface are your DataFrames
+# Adjust column names accordingly
 
-# Load the process.raw_interface table
-raw_interface = spark.read.csv(raw_interface_path, header=True, inferSchema=True)
+# Assuming correct_records DataFrame
+correct_records = spark.table("correct_records")
 
-# Load the validated records
-validated_records = spark.read.csv(validated_records_path, header=True, inferSchema=True)
+# Assuming raw_interface DataFrame
+raw_interface = spark.table("raw_interface")
 
-# Define the schema for process.raw_interface_updated
-raw_interface_updated_schema = raw_interface.schema
+# Convert day_rk to date format for comparison
+raw_interface = raw_interface.withColumn("day_rk_date", F.to_date("day_rk", "dd-MM-yyyy"))
 
-# Filter validated_records to include only necessary fields
-validated_records_subset = validated_records.select(
-    col("day_rk").alias("validated_day_rk"),
-    col("cis_code").alias("validated_cis_code"),
-    col("definitive_pd").alias("validated_definitive_pd")
-)
+# Find the maximum day_rk value for each counterparty_id
+max_day_rk_window = Window.partitionBy("counterparty_id").orderBy(F.desc("day_rk_date"))
+max_day_rk_df = raw_interface.withColumn("max_day_rk", F.row_number().over(max_day_rk_window)).filter("max_day_rk = 1")
 
-# Find the maximum day_rk for each counterparty_id in process.raw_interface
-max_day_rk_per_counterparty = raw_interface.groupBy("counterparty_id").agg(max("day_rk").alias("max_day_rk"))
+# Join the correct_records DataFrame with max_day_rk_df based on conditions
+updated_raw_interface = raw_interface.join(
+    correct_records,
+    (raw_interface["counterparty_id"] == correct_records["cis_code"]) &
+    (raw_interface["postcrm"] == correct_records["definitive_pd"]) &
+    (raw_interface["precrm"] == correct_records["definitive_pd"]) &
+    (raw_interface["day_rk_date"] == correct_records["last_grading_date"]),
+    "left_outer"
+).selectExpr("raw_interface.*", "correct_records.cis_code as updated_cis_code")
 
-# Join process.raw_interface_updated with validated_records_subset based on specified conditions
-joined_data = raw_interface.join(
-    validated_records_subset,
-    (col("counterparty_id") == max_day_rk_per_counterparty["counterparty_id"]) &
-    (col("day_rk") == max_day_rk_per_counterparty["max_day_rk"]) &
-    (col("postcrm") == col("validated_definitive_pd")) &
-    (col("precrm") == col("validated_definitive_pd")),
-    "left"
-)
+# Drop temporary columns
+updated_raw_interface = updated_raw_interface.drop("day_rk_date", "max_day_rk")
 
-# Save the joined data to Athena as process.raw_interface_updated
-joined_data.write.format("parquet").mode("overwrite").saveAsTable("process.raw_interface_updated")
+# Display the updated raw_interface
+updated_raw_interface.show()
+
+# Save the updated_raw_interface DataFrame to a new table or location
+# updated_raw_interface.write.mode("overwrite").saveAsTable("process.raw_interface_updated")
 
 # Stop the Spark session
 spark.stop()
