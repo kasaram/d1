@@ -13,7 +13,7 @@ def format_date_udf():
     return udf(lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y") if date_str else None, StringType())
 
 def validate_cis_code(cis_code):
-    return cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$")
+    return cis_code is not None and cis_code.isalnum()
 
 def validate_definitive_pd(pd, mgs):
     lookup_row = spark.sql(f"SELECT * FROM lookup WHERE mgs = {mgs}").first()
@@ -48,7 +48,7 @@ def main():
 
         # Register UDFs
         spark.udf.register("format_date", lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y") if date_str else None, StringType())
-        spark.udf.register("validate_cis_code", lambda cis_code: cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$"))
+        spark.udf.register("validate_cis_code", validate_cis_code)
         spark.udf.register("validate_definitive_pd", validate_definitive_pd)
 
         # Create temporary views for DataFrames
