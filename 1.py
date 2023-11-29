@@ -9,10 +9,11 @@ def initialize_spark():
 def load_csv(spark, path, header=True, infer_schema=True):
     return spark.read.csv(path, header=header, inferSchema=infer_schema)
 
-def register_udfs(spark):
-    spark.udf.register("format_date", lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y") if date_str else None, StringType())
-    spark.udf.register("validate_cis_code", lambda cis_code: cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$"))
-    spark.udf.register("validate_definitive_pd", validate_definitive_pd)
+def format_date_udf():
+    return udf(lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y") if date_str else None, StringType())
+
+def validate_cis_code(cis_code):
+    return cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$")
 
 def validate_definitive_pd(pd, mgs):
     lookup_row = spark.sql(f"SELECT * FROM lookup WHERE mgs = {mgs}").first()
@@ -23,15 +24,18 @@ def validate_definitive_pd(pd, mgs):
     else:
         return False
 
+def validate_definitive_pd_udf():
+    return udf(validate_definitive_pd, DoubleType())
+
 def main():
     try:
-        # Set your S3 paths
-        input_file_path = "s3://your-s3-bucket/input_file.csv"
-        lookup_file_path = "s3://your-s3-bucket/lookup.csv"
-        correct_output_path = "s3://your-s3-bucket/correct_records.csv"
-        error_output_path = "s3://your-s3-bucket/error_records.csv"
-        validated_records_output_path = "s3://your-s3-bucket/validated_records.csv"
-        raw_interface_path = "s3://your-s3-bucket/raw_interface.csv"
+        # User inputs
+        year_month = '202309'
+        input_file_path = "s3://your-s3-bucket/data/input/input_file.csv"
+        lookup_file_path = "s3://your-s3-bucket/data/lookup/lookup.csv"
+        raw_interface_path = "s3://your-s3-bucket/data/raw_table/raw_interface.csv"
+        output_table_path = "s3://your-s3-bucket/data/output_table/"
+        error_table_path = "s3://your-s3-bucket/data/error_table/"
 
         # Load Spark session
         global spark
@@ -43,7 +47,9 @@ def main():
         input_df = load_csv(spark, input_file_path, header=True, infer_schema=True)
 
         # Register UDFs
-        register_udfs(spark)
+        spark.udf.register("format_date", lambda date_str: datetime.strptime(date_str, "%d-%b-%Y").strftime("%d%m%Y") if date_str else None, StringType())
+        spark.udf.register("validate_cis_code", lambda cis_code: cis_code is not None and cis_code.rlike("^[a-zA-Z0-9]+$"))
+        spark.udf.register("validate_definitive_pd", validate_definitive_pd)
 
         # Create temporary views for DataFrames
         lookup_df.createOrReplaceTempView("lookup")
@@ -69,28 +75,20 @@ def main():
         # Split into correct and error records
         correct_records = validations.filter(validations["error"].isNull())
 
-        # Save the correct records to a new file
-        correct_records.write.csv(correct_output_path, header=True, mode="overwrite")
-
         # Filter records based on year_month using Spark SQL
-        year_month = '202309'
         spark.sql(f"CREATE OR REPLACE TEMPORARY VIEW validated_records AS SELECT * FROM correct_records WHERE substr(last_grading_date, 5, 6) = {year_month}")
 
-        # Save the validated records to a new file
-        validated_records = spark.sql("SELECT * FROM validated_records")
-        validated_records.write.csv(validated_records_output_path, header=True, mode="overwrite")
-
-        # Load the process.raw_interface table
+        # Load the raw_interface table
         raw_interface = load_csv(spark, raw_interface_path, header=True, infer_schema=True)
 
-        # Find the maximum day_rk for each counterparty_id in process.raw_interface using Spark SQL
+        # Find the maximum day_rk for each counterparty_id in raw_interface using Spark SQL
         max_day_rk_per_counterparty = spark.sql("""
             SELECT counterparty_id, MAX(day_rk) AS max_day_rk
             FROM raw_interface
             GROUP BY counterparty_id
         """)
 
-        # Join process.raw_interface_updated with validated_records_subset based on specified conditions using Spark SQL
+        # Join raw_interface with validated_records_subset based on specified conditions using Spark SQL
         joined_data = spark.sql("""
             SELECT r.*, v.*
             FROM raw_interface r
@@ -101,8 +99,14 @@ def main():
             AND r.precrm = v.definitive_pd
         """)
 
-        # Save the joined data to Athena as process.raw_interface_updated
-        joined_data.write.format("parquet").mode("overwrite").saveAsTable("process.raw_interface_updated")
+        # Save the joined data to S3 as raw_interface_updated
+        output_table = f"{output_table_path}raw_interface_updated"
+        joined_data.write.format("parquet").mode("overwrite").save(output_table)
+
+        # Save error data to S3
+        error_records = validations.filter(validations["error"].isNotNull())
+        error_table = f"{error_table_path}error_records"
+        error_records.write.csv(error_table, header=True, mode="overwrite")
 
     except Exception as e:
         print(f"An error occurred: {str(e)}")
