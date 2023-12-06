@@ -47,17 +47,27 @@ updated_raw_interface = (
         (raw_interface["precrm"] == max_day_rk_df["precrm"]),
         "left_semi"
     )
-    .select(raw_interface["*"], correct_records["cis_code"].alias("updated_cis_code"))
+    .select(
+        raw_interface["*"],
+        F.coalesce(correct_records["cis_code"], raw_interface["counterparty_id"]).alias("updated_cis_code"),
+        F.when(correct_records["cis_code"].isNotNull(), "Updated").otherwise("Not Updated").alias("update_status")
+    )
 )
 
 # Drop temporary columns
 updated_raw_interface = updated_raw_interface.drop("day_rk_date", "max_day_rk")
 
-# Display the updated raw_interface
+# Display the updated and non-updated records separately
 updated_raw_interface.show()
 
-# Save the updated_raw_interface DataFrame to a new table or location
-# updated_raw_interface.write.mode("overwrite").saveAsTable("process.raw_interface_updated")
+# Display only the modified records at the end
+modified_records = updated_raw_interface.filter("update_status = 'Updated'")
+print("\nBelow are modified rows in raw_interface table:")
+modified_records.show(truncate=False)
+
+# Display summary of modified records
+summary_df = updated_raw_interface.groupBy("update_status").agg(F.count("update_status").alias("count"))
+summary_df.show()
 
 # Stop the Spark session
 spark.stop()
