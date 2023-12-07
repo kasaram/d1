@@ -5,14 +5,14 @@ from pyspark.sql.window import Window
 # Initialize Spark session
 spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
 
-# Assuming validated_records and raw_interface are your DataFrames
+# Assuming validated_records is your DataFrame
 # Adjust column names accordingly
 
 # Assuming validated_records DataFrame
 validated_records = spark.table("validated_records")
 
-# Assuming raw_interface DataFrame
-raw_interface = spark.table("raw_interface")
+# Load raw_interface table from Athena
+raw_interface = spark.sql("SELECT * FROM your_database.your_raw_interface_table")
 
 # Step 1: Copy raw_interface to raw_interface_new with the same column names
 raw_interface_new = raw_interface.withColumnRenamed("counterparty_id", "updated_cis_code")
@@ -37,7 +37,7 @@ raw_interface_new = (
     )
     .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new["updated_cis_code"]))
     .select(
-        raw_interface_new["*"],
+        raw_interface_new.columns,  # Retain all columns from raw_interface_new
         F.when(validated_records["cis_code"].isNotNull(), 1).otherwise(0).alias("update_flag")
     )
 )
