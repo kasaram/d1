@@ -5,69 +5,50 @@ from pyspark.sql.window import Window
 # Initialize Spark session
 spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
 
-# Assuming correct_records and raw_interface are your DataFrames
+# Assuming validated_records and raw_interface are your DataFrames
 # Adjust column names accordingly
 
-# Assuming correct_records DataFrame
-correct_records = spark.table("correct_records")
+# Assuming validated_records DataFrame
+validated_records = spark.table("validated_records")
 
 # Assuming raw_interface DataFrame
 raw_interface = spark.table("raw_interface")
 
-# Convert day_rk to date format for comparison
-raw_interface = raw_interface.withColumn("day_rk_date", F.to_date("day_rk", "dd-MM-yyyy"))
+# Step 1: Copy raw_interface to raw_interface_new with the same column names
+raw_interface_new = raw_interface.withColumnRenamed("counterparty_id", "updated_cis_code")
 
-# Define the max_day_rk_window
-max_day_rk_window = Window.partitionBy("counterparty_id").orderBy(F.desc("day_rk_date"))
+# Step 2: Print the total number of records in raw_interface_new
+total_records_before_update = raw_interface_new.count()
+print(f'Total no of records in raw_interface_new while creating: {total_records_before_update}')
 
-# Find the maximum day_rk value for each counterparty_id
-max_day_rk_df = (
-    raw_interface
+# Step 3: Update raw_interface_new dataframe
+max_day_rk_window = Window.partitionBy("updated_cis_code").orderBy(F.desc("day_rk"))
+
+raw_interface_new = (
+    raw_interface_new
     .withColumn("max_day_rk", F.row_number().over(max_day_rk_window))
     .filter("max_day_rk = 1")
-    .select("counterparty_id", "day_rk", "postcrm", "precrm", "max_day_rk")
-)
-
-# Join the correct_records DataFrame with max_day_rk_df based on conditions
-updated_raw_interface = (
-    raw_interface
     .join(
-        F.broadcast(correct_records),
-        (raw_interface["counterparty_id"] == correct_records["cis_code"]) &
-        (raw_interface["postcrm"] == correct_records["definitive_pd"]) &
-        (raw_interface["precrm"] == correct_records["definitive_pd"]) &
-        (raw_interface["day_rk_date"] == correct_records["last_grading_date"]),
+        F.broadcast(validated_records),
+        (raw_interface_new["pd_score_postcrm"] == validated_records["definitive_pd"]) &
+        (raw_interface_new["pd_score_precrm"] == validated_records["definitive_pd"]) &
+        (raw_interface_new["day_rk"] == validated_records["last_grading_date"]),
         "left_outer"
     )
-    .join(
-        max_day_rk_df,
-        (raw_interface["counterparty_id"] == max_day_rk_df["counterparty_id"]) &
-        (raw_interface["day_rk"] == max_day_rk_df["day_rk"]) &
-        (raw_interface["postcrm"] == max_day_rk_df["postcrm"]) &
-        (raw_interface["precrm"] == max_day_rk_df["precrm"]),
-        "left_semi"
-    )
+    .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new["updated_cis_code"]))
     .select(
-        raw_interface["*"],
-        F.coalesce(correct_records["cis_code"], raw_interface["counterparty_id"]).alias("updated_cis_code"),
-        F.when(correct_records["cis_code"].isNotNull(), "Updated").otherwise("Not Updated").alias("update_status")
+        raw_interface_new["*"],
+        F.when(validated_records["cis_code"].isNotNull(), 1).otherwise(0).alias("update_flag")
     )
 )
 
-# Drop temporary columns
-updated_raw_interface = updated_raw_interface.drop("day_rk_date", "max_day_rk")
+# Step 4: Display the total number of rows updated
+total_updated_records = raw_interface_new.filter("update_flag = 1").count()
+print(f'Total no of rows updated with new cis_code: {total_updated_records}')
 
-# Display the updated and non-updated records separately
-updated_raw_interface.show()
-
-# Display only the modified records at the end
-modified_records = updated_raw_interface.filter("update_status = 'Updated'")
-print("\nBelow are modified rows in raw_interface table:")
-modified_records.show(truncate=False)
-
-# Display summary of modified records
-summary_df = updated_raw_interface.groupBy("update_status").agg(F.count("update_status").alias("count"))
-summary_df.show()
+# Step 5: Display the total number of records in raw_interface_new after update
+total_records_after_update = raw_interface_new.count()
+print(f'No of records in raw_interface_new after update: {total_records_after_update}')
 
 # Stop the Spark session
 spark.stop()
