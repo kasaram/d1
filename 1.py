@@ -11,8 +11,8 @@ spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
 # Assuming validated_records DataFrame
 validated_records = spark.table("validated_records")
 
-# Load raw_interface table from Athena
-raw_interface = spark.sql("SELECT * FROM your_database.your_raw_interface_table")
+# Load raw_interface table from CSV file
+raw_interface = spark.read.csv("/path/to/raw_interface.csv", header=True, inferSchema=True)
 
 # Step 1: Copy raw_interface to raw_interface_new with the same column names
 raw_interface_new = raw_interface.withColumnRenamed("counterparty_id", "updated_cis_code")
@@ -37,7 +37,9 @@ raw_interface_new = (
     )
     .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new["updated_cis_code"]))
     .select(
-        raw_interface_new.columns,  # Include all columns from raw_interface_new
+        "column1", "column2",  # Replace with actual column names
+        "updated_cis_code",
+        "column3", "column4",  # Continue listing all column names
         F.when(validated_records["cis_code"].isNotNull(), 1).otherwise(0).alias("update_flag")
     )
 )
@@ -49,6 +51,9 @@ print(f'Total no of rows updated with new cis_code: {total_updated_records}')
 # Step 5: Display the total number of records in raw_interface_new after update
 total_records_after_update = raw_interface_new.count()
 print(f'No of records in raw_interface_new after update: {total_records_after_update}')
+
+# Step 6: Write raw_interface_new to a new CSV file
+raw_interface_new.write.csv("/path/to/raw_interface_updated", header=True, mode="overwrite")
 
 # Stop the Spark session
 spark.stop()
