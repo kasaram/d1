@@ -37,7 +37,9 @@ raw_interface_new = (
     )
     .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new["updated_cis_code"]))
     .select(
-        raw_interface_new.columns,  # Retain all columns from raw_interface_new
+        "col1", "col2",  # Include all column names explicitly
+        "updated_cis_code",
+        "col3", "col4",  # Continue listing all column names
         F.when(validated_records["cis_code"].isNotNull(), 1).otherwise(0).alias("update_flag")
     )
 )
