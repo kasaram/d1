@@ -36,9 +36,9 @@ raw_interface_new = (
         "left_outer"
     )
     .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new["updated_cis_code"]))
-    .select(
-        raw_interface_new.columns,
-        F.when(validated_records["cis_code"].isNotNull(), 1).otherwise(0).alias("update_flag")
+    .selectExpr(
+        [f"`{col}`" for col in raw_interface_new.columns],  # Include all columns from raw_interface_new
+        "CASE WHEN cis_code IS NOT NULL THEN 1 ELSE 0 END as update_flag"
     )
 )
 
