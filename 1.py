@@ -30,8 +30,8 @@ raw_interface_new = (
     .filter("max_day_rk = 1")
     .join(
         F.broadcast(validated_records),
-        (raw_interface_new["pd_score_postcrm"] == validated_records["definitive_pd"]) &
-        (raw_interface_new["pd_score_precrm"] == validated_records["definitive_pd"]) &
+        (raw_interface_new["postcrm"] == validated_records["definitive_pd"]) &
+        (raw_interface_new["precrm"] == validated_records["definitive_pd"]) &
         (raw_interface_new["day_rk"] == validated_records["last_grading_date"]),
         "left_outer"
     )
