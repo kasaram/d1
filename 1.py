@@ -30,15 +30,13 @@ raw_interface_new = (
     .filter("max_day_rk = 1")
     .join(
         F.broadcast(validated_records),
-        (raw_interface_new["postcrm"] == validated_records["definitive_pd"]) &
-        (raw_interface_new["precrm"] == validated_records["definitive_pd"]) &
-        (raw_interface_new["day_rk"] == validated_records["last_grading_date"]),
+        raw_interface_new["day_rk"] == validated_records["last_grading_date"],
         "left_outer"
     )
     .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new["updated_cis_code"]))
-    .selectExpr(
-        "*",  # Include all columns from raw_interface_new
-        "CASE WHEN cis_code IS NOT NULL THEN 1 ELSE 0 END as update_flag"
+    .select(
+        raw_interface_new.columns,
+        F.when(validated_records["cis_code"].isNotNull(), 1).otherwise(0).alias("update_flag")
     )
 )
 
