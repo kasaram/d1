@@ -5,12 +5,6 @@ from pyspark.sql.window import Window
 # Initialize Spark session
 spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
 
-# Assuming validated_records is your DataFrame
-# Adjust column names accordingly
-
-# Assuming validated_records DataFrame
-validated_records = spark.table("validated_records")
-
 # Load raw_interface table from CSV file
 raw_interface = spark.read.csv("/path/to/raw_interface.csv", header=True, inferSchema=True)
 
@@ -19,38 +13,59 @@ raw_interface_new = raw_interface.withColumnRenamed("counterparty_id", "updated_
 
 # Step 2: Print the total number of records in raw_interface_new
 total_records_before_update = raw_interface_new.count()
-print(f'Total no of records in raw_interface_new while creating: {total_records_before_update}')
+print(f'Total no of records in raw_interface_new now: {total_records_before_update}')
 
-# Step 3: Update raw_interface_new dataframe
-max_day_rk_window = Window.partitionBy("updated_cis_code").orderBy(F.desc("day_rk"))
+# Step 3: Get max_day = max(day_rk) and display max day_rk
+max_day_rk = raw_interface_new.agg(F.max("day_rk").alias("max_day_rk")).first()["max_day_rk"]
+print(f'Max day_rk is: {max_day_rk}')
 
-raw_interface_new = (
-    raw_interface_new
-    .withColumn("max_day_rk", F.row_number().over(max_day_rk_window))
-    .filter("max_day_rk = 1")
+# Step 4: Create raw_interface_new_max_day_rk_data
+raw_interface_new_max_day_rk_data = raw_interface_new.filter(raw_interface_new["day_rk"] == max_day_rk)
+
+# Step 5: Print the total number of records in raw_interface_new_max_day_rk_data
+total_records_max_day_rk_data = raw_interface_new_max_day_rk_data.count()
+print(f'Total no of records in raw_interface_new_max_day_rk_data: {total_records_max_day_rk_data}')
+
+# Step 6: Create raw_interface_new_non_max_day_rk_data
+raw_interface_new_non_max_day_rk_data = raw_interface_new.filter(raw_interface_new["day_rk"] != max_day_rk)
+
+# Step 7: Print the total number of records in raw_interface_new_non_max_day_rk_data
+total_records_non_max_day_rk_data = raw_interface_new_non_max_day_rk_data.count()
+print(f'Total no of records in raw_interface_new_non_max_day_rk_data: {total_records_non_max_day_rk_data}')
+
+# Step 8: Update counterparty_id in raw_interface_new_max_day_rk_data
+validated_records = spark.table("validated_records")  # Assuming validated_records is your DataFrame
+raw_interface_new_max_day_rk_data = (
+    raw_interface_new_max_day_rk_data
     .join(
         F.broadcast(validated_records),
-        (raw_interface_new["pd_score_postcrm"] == validated_records["definitive_pd"]) &
-        (raw_interface_new["pd_score_precrm"] == validated_records["definitive_pd"]) &
-        (raw_interface_new["day_rk"] == validated_records["last_grading_date"]),
+        (raw_interface_new_max_day_rk_data["pd_score_postcrm"] == validated_records["definitive_pd"]) &
+        (raw_interface_new_max_day_rk_data["pd_score_precrm"] == validated_records["definitive_pd"]),
         "left_outer"
     )
-    .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new["updated_cis_code"]))
-    .selectExpr(
-        [f"`{col}`" for col in raw_interface_new.columns] + ["CASE WHEN cis_code IS NOT NULL THEN 1 ELSE 0 END as update_flag"]
-    )
+    .withColumn("updated_cis_code", F.coalesce(validated_records["cis_code"], raw_interface_new_max_day_rk_data["updated_cis_code"]))
 )
 
-# Step 4: Display the total number of rows updated
-total_updated_records = raw_interface_new.filter("update_flag = 1").count()
-print(f'Total no of rows updated with new cis_code: {total_updated_records}')
+# Step 9: Print count of raw_interface_new_max_day_rk_data after updating counterparty_id
+total_records_updated_max_day_rk_data = raw_interface_new_max_day_rk_data.count()
+print(f'Total no of records in raw_interface_new_max_day_rk_data after updating counterparty_id: {total_records_updated_max_day_rk_data}')
 
-# Step 5: Display the total number of records in raw_interface_new after update
-total_records_after_update = raw_interface_new.count()
-print(f'No of records in raw_interface_new after update: {total_records_after_update}')
+# Step 10: Display only records with modified counterparty_id in raw_interface_new_max_day_rk_data
+modified_records = raw_interface_new_max_day_rk_data.filter("updated_cis_code != counterparty_id")
+modified_records.show(truncate=False)
 
-# Step 6: Write raw_interface_new to a new CSV file
-raw_interface_new.write.csv("/path/to/raw_interface_updated", header=True, mode="overwrite")
+# Step 11: Create raw_interface_final by appending raw_interface_new_max_day_rk_data and raw_interface_new_non_max_day_rk_data
+raw_interface_final = raw_interface_new_max_day_rk_data.union(raw_interface_new_non_max_day_rk_data)
+
+# Step 12: Print the total number of records in raw_interface_final
+total_records_final = raw_interface_final.count()
+print(f'Total no of records in raw_interface_final: {total_records_final}')
+
+# Step 13: Compare raw_interface_final record count with raw_interface_new count from Step 3
+if total_records_before_update == total_records_final:
+    print("Counts match!")
+else:
+    print("Counts do not match!")
 
 # Stop the Spark session
 spark.stop()
