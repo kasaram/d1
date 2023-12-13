@@ -27,39 +27,39 @@ total_records_max_day_rk_data = raw_interface_max_day_rk_data.count()
 print(f'Total no of records in raw_interface_max_day_rk_data: {total_records_max_day_rk_data}')
 
 # Step 5: Update counterparty_id in raw_interface_max_day_rk_data
-raw_interface_max_day_rk_data = (
-    raw_interface_max_day_rk_data
-    .join(
-        F.broadcast(validated_records),
-        (raw_interface_max_day_rk_data["pd_score_postcrm"] == validated_records["definitive_pd"]) &
-        (raw_interface_max_day_rk_data["pd_score_precrm"] == validated_records["definitive_pd"]),
-        "left_outer"
+raw_interface_max_day_rk_data_after_update = (
+    raw_interface_max_day_rk_data.withColumn(
+        "counterparty_id",
+        F.when(
+            (raw_interface_max_day_rk_data["pd_score_postcrm"] == raw_interface_max_day_rk_data["definitive_pd"]) &
+            (raw_interface_max_day_rk_data["pd_score_precrm"] == raw_interface_max_day_rk_data["definitive_pd"]),
+            raw_interface_max_day_rk_data["validated_cis_code"]
+        ).otherwise(raw_interface_max_day_rk_data["counterparty_id"])
     )
-    .withColumn("counterparty_id", F.coalesce(validated_records["cis_code"], raw_interface_max_day_rk_data["counterparty_id"]))
 )
 
 # Step 6: Print count of raw_interface_max_day_rk_data after updating counterparty_id
-total_records_updated_max_day_rk_data = raw_interface_max_day_rk_data.count()
+total_records_updated_max_day_rk_data = raw_interface_max_day_rk_data_after_update.count()
 print(f'Total no of records in raw_interface_max_day_rk_data after updating counterparty_id: {total_records_updated_max_day_rk_data}')
 
 # Step 7: Display only records with modified counterparty_id in raw_interface_max_day_rk_data
-modified_records = raw_interface_max_day_rk_data.filter("counterparty_id != updated_cis_code")
+modified_records = raw_interface_max_day_rk_data_after_update.filter("counterparty_id != cis_code")
 modified_records.show(truncate=False)
 
 # Step 8: Create raw_interface_final by updating the original DataFrame
-raw_interface = raw_interface.withColumn(
+raw_interface_final = raw_interface.withColumn(
     "counterparty_id",
     F.when(
         (raw_interface["day_rk"] == max_day_rk) &
-        (raw_interface["pd_score_postcrm"] == validated_records["definitive_pd"]) &
-        (raw_interface["pd_score_precrm"] == validated_records["definitive_pd"]),
-        validated_records["cis_code"]
+        (raw_interface["pd_score_postcrm"] == raw_interface["definitive_pd"]) &
+        (raw_interface["pd_score_precrm"] == raw_interface["definitive_pd"]),
+        raw_interface["validated_cis_code"]
     ).otherwise(raw_interface["counterparty_id"])
 )
 
-# Step 9: Print the total number of records in raw_interface after update
-total_records_final = raw_interface.count()
-print(f'Total no of records in raw_interface after update: {total_records_final}')
+# Step 9: Print the total number of records in raw_interface_final
+total_records_final = raw_interface_final.count()
+print(f'Total no of records in raw_interface_final: {total_records_final}')
 
 # Step 10: Compare raw_interface_final record count with raw_interface count from Step 1
 if total_records_before_update == total_records_final:
