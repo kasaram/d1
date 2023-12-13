@@ -19,6 +19,7 @@ raw_interface_schema = StructType([
 raw_interface_data = [
     ("2023-01-01", "CIS001", "PD1", "PD1", "dummy1", "dummy2"),
     ("2023-01-02", "CIS002", "PD2", "PD2", "dummy3", "dummy4"),
+    ("2023-01-02", "CIS003", "PD1", "PD2", "dummy5", "dummy6"),  # Additional record
     # Add more rows as needed
 ]
 
