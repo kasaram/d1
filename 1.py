@@ -1,12 +1,3 @@
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-
-# Initialize Spark session
-spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
-
-# Load raw_interface table from CSV file
-raw_interface = spark.read.csv("/path/to/raw_interface.csv", header=True, inferSchema=True)
 
 # Step 1: Copy raw_interface to raw_interface_new with the same column names
 raw_interface_new = raw_interface.withColumnRenamed("counterparty_id", "updated_cis_code")
@@ -34,7 +25,6 @@ total_records_non_max_day_rk_data = raw_interface_new_non_max_day_rk_data.count(
 print(f'Total no of records in raw_interface_new_non_max_day_rk_data: {total_records_non_max_day_rk_data}')
 
 # Step 8: Update counterparty_id in raw_interface_new_max_day_rk_data
-validated_records = spark.table("validated_records")  # Assuming validated_records is your DataFrame
 raw_interface_new_max_day_rk_data = (
     raw_interface_new_max_day_rk_data
     .join(
