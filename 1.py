@@ -1,6 +1,5 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.window import Window
 
 # Initialize Spark session
 spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
@@ -28,7 +27,6 @@ total_records_max_day_rk_data = raw_interface_max_day_rk_data.count()
 print(f'Total no of records in raw_interface_max_day_rk_data: {total_records_max_day_rk_data}')
 
 # Step 5: Update counterparty_id in raw_interface_max_day_rk_data
-validated_records = spark.table("validated_records")  # Assuming validated_records is your DataFrame
 raw_interface_max_day_rk_data = (
     raw_interface_max_day_rk_data
     .join(
@@ -48,11 +46,22 @@ print(f'Total no of records in raw_interface_max_day_rk_data after updating coun
 modified_records = raw_interface_max_day_rk_data.filter("counterparty_id != updated_cis_code")
 modified_records.show(truncate=False)
 
-# Step 8: Print the total number of records in raw_interface
+# Step 8: Create raw_interface_final by updating the original DataFrame
+raw_interface = raw_interface.withColumn(
+    "counterparty_id",
+    F.when(
+        (raw_interface["day_rk"] == max_day_rk) &
+        (raw_interface["pd_score_postcrm"] == validated_records["definitive_pd"]) &
+        (raw_interface["pd_score_precrm"] == validated_records["definitive_pd"]),
+        validated_records["cis_code"]
+    ).otherwise(raw_interface["counterparty_id"])
+)
+
+# Step 9: Print the total number of records in raw_interface after update
 total_records_final = raw_interface.count()
 print(f'Total no of records in raw_interface after update: {total_records_final}')
 
-# Step 9: Compare raw_interface_final record count with raw_interface count from Step 1
+# Step 10: Compare raw_interface_final record count with raw_interface count from Step 1
 if total_records_before_update == total_records_final:
     print("Counts match!")
 else:
