@@ -1,6 +1,23 @@
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
+
+# Load raw_interface table from CSV file
+raw_interface = spark.read.csv("/path/to/raw_interface.csv", header=True, inferSchema=True)
+
+# Print the schema to identify the correct column names
+print("Schema of raw_interface:")
+raw_interface.printSchema()
 
 # Step 1: Copy raw_interface to raw_interface_new with the same column names
 raw_interface_new = raw_interface.withColumnRenamed("counterparty_id", "updated_cis_code")
+
+# Print the schema to identify the correct column names
+print("Schema of raw_interface_new:")
+raw_interface_new.printSchema()
 
 # Step 2: Print the total number of records in raw_interface_new
 total_records_before_update = raw_interface_new.count()
@@ -25,6 +42,7 @@ total_records_non_max_day_rk_data = raw_interface_new_non_max_day_rk_data.count(
 print(f'Total no of records in raw_interface_new_non_max_day_rk_data: {total_records_non_max_day_rk_data}')
 
 # Step 8: Update counterparty_id in raw_interface_new_max_day_rk_data
+validated_records = spark.table("validated_records")  # Assuming validated_records is your DataFrame
 raw_interface_new_max_day_rk_data = (
     raw_interface_new_max_day_rk_data
     .join(
@@ -41,7 +59,7 @@ total_records_updated_max_day_rk_data = raw_interface_new_max_day_rk_data.count(
 print(f'Total no of records in raw_interface_new_max_day_rk_data after updating counterparty_id: {total_records_updated_max_day_rk_data}')
 
 # Step 10: Display only records with modified counterparty_id in raw_interface_new_max_day_rk_data
-modified_records = raw_interface_new_max_day_rk_data.filter("updated_cis_code != counterparty_id")
+modified_records = raw_interface_new_max_day_rk_data.filter("updated_cis_code != updated_cis_code")
 modified_records.show(truncate=False)
 
 # Step 11: Create raw_interface_final by appending raw_interface_new_max_day_rk_data and raw_interface_new_non_max_day_rk_data
