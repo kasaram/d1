@@ -31,9 +31,9 @@ raw_interface_max_day_rk_data_after_update = (
     raw_interface_max_day_rk_data.withColumn(
         "counterparty_id",
         F.when(
-            (raw_interface_max_day_rk_data["pd_score_postcrm"] == raw_interface_max_day_rk_data["definitive_pd"]) &
-            (raw_interface_max_day_rk_data["pd_score_precrm"] == raw_interface_max_day_rk_data["definitive_pd"]),
-            raw_interface_max_day_rk_data["validated_cis_code"]
+            (raw_interface_max_day_rk_data["pd_score_postcrm"] == correct_records["definitive_pd"]) &
+            (raw_interface_max_day_rk_data["pd_score_precrm"] == correct_records["definitive_pd"]),
+            correct_records["cis_code"]
         ).otherwise(raw_interface_max_day_rk_data["counterparty_id"])
     )
 )
@@ -51,9 +51,9 @@ raw_interface_final = raw_interface.withColumn(
     "counterparty_id",
     F.when(
         (raw_interface["day_rk"] == max_day_rk) &
-        (raw_interface["pd_score_postcrm"] == raw_interface["definitive_pd"]) &
-        (raw_interface["pd_score_precrm"] == raw_interface["definitive_pd"]),
-        raw_interface["validated_cis_code"]
+        (raw_interface["pd_score_postcrm"] == correct_records["definitive_pd"]) &
+        (raw_interface["pd_score_precrm"] == correct_records["definitive_pd"]),
+        correct_records["cis_code"]
     ).otherwise(raw_interface["counterparty_id"])
 )
 
