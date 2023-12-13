@@ -62,8 +62,8 @@ print(f'Total no of records in raw_interface_new_max_day_rk_data after updating 
 modified_records = raw_interface_new_max_day_rk_data.filter("updated_cis_code != updated_cis_code")
 modified_records.show(truncate=False)
 
-# Step 11: Create raw_interface_final by appending raw_interface_new_max_day_rk_data and raw_interface_new_non_max_day_rk_data
-raw_interface_final = raw_interface_new_max_day_rk_data.union(raw_interface_new_non_max_day_rk_data)
+# Step 11: Create raw_interface_final by selecting only the columns present in raw_interface
+raw_interface_final = raw_interface_new_max_day_rk_data.select(raw_interface.columns)
 
 # Step 12: Print the total number of records in raw_interface_final
 total_records_final = raw_interface_final.count()
