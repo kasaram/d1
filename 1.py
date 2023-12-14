@@ -1,109 +1,58 @@
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql.functions import col, max
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("UpdateRawInterface").getOrCreate()
+spark = SparkSession.builder.appName("RawInterfaceProcessing").getOrCreate()
 
-# Mockup data for raw_interface
-raw_interface_schema = StructType([
-    StructField("day_rk", StringType(), True),
-    StructField("counterparty_id", StringType(), True),
-    StructField("pd_score_postcrm", StringType(), True),
-    StructField("pd_score_precrm", StringType(), True),
-    StructField("col1", StringType(), True),
-    StructField("col2", StringType(), True),
-    # Add more dummy columns as needed
-])
+# Sample data for validated_records
+validated_records_data = [
+    (1, "cis1", "entity1", "model1", "v1", "seg1", "grade1", 0.2, "Y", "Country1", "2023-01-01"),
+    (2, "cis2", "entity2", "model2", "v2", "seg2", "grade2", 0.3, "N", "Country2", "2023-01-02"),
+    # Add more data as needed
+]
 
+# Sample data for raw_interface
 raw_interface_data = [
-    ("2023-01-01", "CIS001", "PD1", "PD1", "dummy1", "dummy2"),
-    ("2023-01-02", "CIS002", "PD2", "PD2", "dummy3", "dummy4"),
-    ("2023-01-02", "CIS003", "PD1", "PD2", "dummy5", "dummy6"),  # Additional record
-    # Add more rows as needed
+    ("01-01-2023", "cp1", "postcrm1", "precrm1", "col1", "col2"),
+    ("01-02-2023", "cp2", "postcrm2", "precrm2", "col1", "col2"),
+    ("01-02-2023", "cp2", "postcrm2", "precrm2", "col1", "col2"),
+    ("01-02-2023", "cp2", "postcrm2", "precrm2", "col1", "col2"),
+    ("01-09-2023", "cp2", "postcrm2", "precrm2", "col1", "col2"),
+    # Add more data as needed
 ]
 
-raw_interface = spark.createDataFrame(raw_interface_data, schema=raw_interface_schema)
+# Create DataFrames
+validated_records_df = spark.createDataFrame(validated_records_data, ["sl_no", "cis_code", "entity_name", "model_name", "model_version", "segment", "definitive_grade", "definitive_pd", "cascade_flag", "country_of_operations", "last_grading_date"])
+raw_interface_df = spark.createDataFrame(raw_interface_data, ["day_rk", "counterparty_id", "pd_score_postcrm", "pd_score_precrm", "col1", "col2"])
 
-# Mockup data for correct_records
-correct_records_schema = StructType([
-    StructField("sl_no", StringType(), True),
-    StructField("cis_code", StringType(), True),
-    StructField("enitity_name", StringType(), True),
-    StructField("model_name", StringType(), True),
-    StructField("model_version", StringType(), True),
-    StructField("segment", StringType(), True),
-    StructField("definitive_grade", StringType(), True),
-    StructField("definitive_pd", StringType(), True),
-    StructField("cascade_flag", StringType(), True),
-    StructField("country_of_operations", StringType(), True),
-    StructField("last_grading_date", StringType(), True),
-])
+# 1. Copy raw_interface to "raw_interface_new" temp dataframe
+raw_interface_new_df = raw_interface_df.withColumnRenamed("counterparty_id", "cis_code")
 
-correct_records_data = [
-    ("1", "CIS001", "Entity1", "ModelA", "v1", "SegmentA", "GradeA", "PD1", "N", "CountryA", "2023-01-01"),
-    ("2", "CIS002", "Entity2", "ModelB", "v2", "SegmentB", "GradeB", "PD2", "N", "CountryB", "2023-01-02"),
-    # Add more rows as needed
-]
+# 2. Print total number of records in "raw_interface_new"
+print(f'Total no of records in "raw_interface_new" now: {raw_interface_new_df.count()}')
 
-correct_records = spark.createDataFrame(correct_records_data, schema=correct_records_schema)
+# 3. Get max_day = max(day_rk) and display max day_rk
+max_day = raw_interface_new_df.select(max(col("day_rk"))).first()[0]
+print(f'Max day_rk is: {max_day}')
 
-# Step 1: Print the total number of records in raw_interface
-total_records_before_update = raw_interface.count()
-print(f'Total no of records in raw_interface now: {total_records_before_update}')
+# 4. Create "raw_interface_new_max_day_rk_data" from "raw_interface_new" where day_rk = max_day
+raw_interface_new_max_day_rk_data = raw_interface_new_df.filter(col("day_rk") == max_day)
 
-# Step 2: Get max_day = max(day_rk) and display max day_rk
-max_day_rk = raw_interface.agg(F.max("day_rk").alias("max_day_rk")).first()["max_day_rk"]
-print(f'Max day_rk is: {max_day_rk}')
+# 5. Print total number of records in "raw_interface_new_max_day_rk_data"
+print(f'Total no of records in "raw_interface_new_max_day_rk_data": {raw_interface_new_max_day_rk_data.count()}')
 
-# Step 3: Create raw_interface_max_day_rk_data
-raw_interface_max_day_rk_data = raw_interface.filter(raw_interface["day_rk"] == max_day_rk)
+# 6. Create "raw_interface_new_non_max_day_rk_data" from "raw_interface_new" where day_rk not equal max_day
+raw_interface_new_non_max_day_rk_data = raw_interface_new_df.filter(col("day_rk") != max_day)
 
-# Step 4: Print the total number of records in raw_interface_max_day_rk_data
-total_records_max_day_rk_data = raw_interface_max_day_rk_data.count()
-print(f'Total no of records in raw_interface_max_day_rk_data: {total_records_max_day_rk_data}')
+# 7. Print total number of records in "raw_interface_new_non_max_day_rk_data"
+print(f'Total no of records in "raw_interface_new_non_max_day_rk_data": {raw_interface_new_non_max_day_rk_data.count()}')
 
-# Step 5: Update counterparty_id in raw_interface_max_day_rk_data
-raw_interface_max_day_rk_data_after_update = (
-    raw_interface_max_day_rk_data.withColumn(
-        "counterparty_id",
-        F.when(
-            (raw_interface_max_day_rk_data["pd_score_postcrm"] == correct_records["definitive_pd"]) &
-            (raw_interface_max_day_rk_data["pd_score_precrm"] == correct_records["definitive_pd"]),
-            correct_records["cis_code"]
-        ).otherwise(raw_interface_max_day_rk_data["counterparty_id"])
-    )
-)
+# 8. Display raw_interface_new_max_day_rk_data and raw_interface_new_non_max_day_rk_data records
+print("Records in raw_interface_new_max_day_rk_data:")
+raw_interface_new_max_day_rk_data.show(truncate=False)
 
-# Step 6: Print count of raw_interface_max_day_rk_data after updating counterparty_id
-total_records_updated_max_day_rk_data = raw_interface_max_day_rk_data_after_update.count()
-print(f'Total no of records in raw_interface_max_day_rk_data after updating counterparty_id: {total_records_updated_max_day_rk_data}')
+print("Records in raw_interface_new_non_max_day_rk_data:")
+raw_interface_new_non_max_day_rk_data.show(truncate=False)
 
-# Step 7: Display only records with modified counterparty_id in raw_interface_max_day_rk_data
-modified_records = raw_interface_max_day_rk_data_after_update.filter("counterparty_id != cis_code")
-print("Modified Records:")
-modified_records.show(truncate=False)
-
-# Step 8: Create raw_interface_final by updating the original DataFrame
-raw_interface_final = raw_interface.withColumn(
-    "counterparty_id",
-    F.when(
-        (raw_interface["day_rk"] == max_day_rk) &
-        (raw_interface["pd_score_postcrm"] == correct_records["definitive_pd"]) &
-        (raw_interface["pd_score_precrm"] == correct_records["definitive_pd"]),
-        correct_records["cis_code"]
-    ).otherwise(raw_interface["counterparty_id"])
-)
-
-# Step 9: Print the total number of records in raw_interface_final
-total_records_final = raw_interface_final.count()
-print(f'Total no of records in raw_interface_final: {total_records_final}')
-
-# Step 10: Compare raw_interface_final record count with raw_interface count from Step 1
-if total_records_before_update == total_records_final:
-    print("Counts match!")
-else:
-    print("Counts do not match!")
-
-# Stop the Spark session
+# Stop Spark session
 spark.stop()
