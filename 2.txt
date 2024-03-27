@@ -15,13 +15,19 @@ ref_df = spark.createDataFrame([
     "definitive_grade", "definitive_pd", "cascade_flag", "country_of_operations", "last_grading_date"])
 
 main_data_df = spark.createDataFrame([
-    ("01-07-2023", "cp4", "postcrm4", "precrm4", "col1", "col2", "col3"),
-    ("01-07-2023", "cp5", "postcrm5", "precrm5", "col1", "col2", "col3"),
-    ("01-07-2023", "cis1", "postcrm6", "precrm6", "col1", "col2", "col3"),
-    ("01-07-2023", "cis2", "postcrm7", "precrm7", "col1", "col2", "col3"),
-    ("01-07-2023", "cp6", "postcrm8", "precrm8", "col1", "col2", "col3"),
-    ("01-07-2023", "cis3", "postcrm9", "precrm9", "col1", "col2", "col3")
-], ["day_rk", "counterparty_id", "pd_score_postcrm", "pd_score_precrm", "col1", "col2", "col3"])
+    ("01-07-2023", "cp4", "postcrm4", "precrm4", "col1", "col2", "col3", 1),
+    ("01-07-2023", "cp5", "postcrm5", "precrm5", "col1", "col2", "col3", 1),
+    ("01-07-2023", "cis1", "postcrm6", "precrm6", "col1", "col2", "col3", 1),
+    ("01-07-2023", "cis2", "postcrm7", "precrm7", "col1", "col2", "col3", 1),
+    ("01-07-2023", "cp6", "postcrm8", "precrm8", "col1", "col2", "col3", 1),
+    ("01-07-2023", "cis3", "postcrm9", "precrm9", "col1", "col2", "col3", 1),
+    ("02-07-2023", "cp4", "postcrm4", "precrm4", "col1", "col2", "col3", 2),
+    ("02-07-2023", "cp5", "postcrm5", "precrm5", "col1", "col2", "col3", 2),
+    ("02-07-2023", "cis1", "postcrm6", "precrm6", "col1", "col2", "col3", 2),
+    ("02-07-2023", "cis2", "postcrm7", "precrm7", "col1", "col2", "col3", 2),
+    ("02-07-2023", "cp6", "postcrm8", "precrm8", "col1", "col2", "col3", 2),
+    ("02-07-2023", "cis3", "postcrm9", "precrm9", "col1", "col2", "col3", 2)
+], ["day_rk", "counterparty_id", "pd_score_postcrm", "pd_score_precrm", "col1", "col2", "col3", "day"])
 
 # Step 1: Print no of records in main_data_df
 print("Step 1:")
@@ -31,7 +37,9 @@ print("Number of records in main_data_df:", main_data_df.count())
 # a. Update pd_score_postcrm with ref_df.definitive_pd where ref_df.cis_code = main_data_df.counterparty_id
 # b. Update pd_score_precrm with ref_df.definitive_pd where ref_df.cis_code = main_data_df.counterparty_id
 
-updated_main_data_df = main_data_df.join(ref_df, main_data_df["counterparty_id"] == ref_df["cis_code"], "left") \
+max_day = main_data_df.groupBy().max("day").collect()[0][0]
+
+updated_main_data_df = main_data_df.filter(col("day") == max_day).join(ref_df, main_data_df["counterparty_id"] == ref_df["cis_code"], "left") \
     .withColumn("pd_score_postcrm", 
                 when(col("definitive_pd").isNull(), col("pd_score_postcrm")).otherwise(col("definitive_pd"))) \
     .withColumn("pd_score_precrm", 
@@ -48,6 +56,11 @@ print("Number of records in updated_main_data_df:", updated_main_data_df.count()
 print("\nStep 4:")
 print("Updated records in main_data_df:")
 updated_main_data_df.show(truncate=False)
+
+# Step 5: Print only records with update_flag = 1
+print("\nStep 5:")
+print("Records with update_flag = 1:")
+updated_main_data_df.filter(col("update_flag") == 1).show(truncate=False)
 
 # Stop SparkSession
 spark.stop()
