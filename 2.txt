@@ -36,8 +36,9 @@ updated_main_data_df = main_data_df.join(ref_df, main_data_df["counterparty_id"]
                 when(col("definitive_pd").isNull(), col("pd_score_postcrm")).otherwise(col("definitive_pd"))) \
     .withColumn("pd_score_precrm", 
                 when(col("definitive_pd").isNull(), col("pd_score_precrm")).otherwise(col("definitive_pd"))) \
+    .withColumn("update_flag", when(col("definitive_pd").isNull(), 0).otherwise(1)) \
     .drop("definitive_pd", "cis_code") \
-    .select(main_data_df.columns)
+    .select(main_data_df.columns + ["update_flag"])
 
 # Step 3: Print no of records in updated_main_data_df
 print("\nStep 3:")
